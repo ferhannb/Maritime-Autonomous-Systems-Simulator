@@ -17,7 +17,9 @@
 - [Vision](#vision)
 - [Core Architecture](#core-architecture)
 - [System Layers](#system-layers)
-- [Development Roadmap](#development-roadmap)
+- [Development Phases](#development-phases)
+- [Phase Summary Table](#phase-summary-table)
+- [Detailed Roadmap](#detailed-roadmap)
 - [Visual Roadmap](#visual-roadmap)
 - [Repository Structure](#repository-structure)
 - [ROS 2 Interface Philosophy](#ros-2-interface-philosophy)
@@ -27,6 +29,7 @@
 - [Near-Term Milestones](#near-term-milestones)
 - [Long-Term Direction](#long-term-direction)
 - [What Success Looks Like](#what-success-looks-like)
+- [What This Project Is Not](#what-this-project-is-not)
 - [Final Statement](#final-statement)
 
 ---
@@ -46,7 +49,7 @@ The objective is to create a simulation framework that supports:
 - system identification feedback loops
 - future HIL/SIL and digital twin workflows
 
-This project is designed around a simple idea:
+This project is based on a simple principle:
 
 > A useful simulator is not an animation tool.  
 > It is an engineering instrument.
@@ -101,11 +104,11 @@ This means combining:
 
 - **Gazebo Sim** as the simulation world and physics backbone
 - **ROS 2** as the communication and autonomy backbone
-- **Custom vehicle dynamics and actuator models**
-- **Scenario-based evaluation and benchmarking**
-- **Sensorized autonomy workflows**
-- **Validation against real-world data**
-- **A path toward digital twin alignment**
+- **custom vehicle dynamics and actuator models**
+- **scenario-based evaluation and benchmarking**
+- **sensorized autonomy workflows**
+- **validation against real-world data**
+- **a path toward digital twin alignment**
 
 ---
 
@@ -130,37 +133,3 @@ This means combining:
 +------------------------------------------------------------------+
 |                         Gazebo Sim Backbone                      |
 +------------------------------------------------------------------+
----
-```text
-## Visiual Roadmap
-
-[Phase 0]
-Foundation
-    |
-    v
-[Phase 1]
-Minimal Floating Vehicle
-    |
-    v
-[Phase 2]
-Control Integration
-    |
-    v
-[Phase 3]
-Actuator Realism
-    |
-    v
-[Phase 4]
-Disturbance & Environment
-    |
-    v
-[Phase 5]
-Sensorized Autonomy Stack
-    |
-    v
-[Phase 6]
-Scenario Library
-    |
-    v
-[Phase 7]
-Validation & Digital Twin Direction
