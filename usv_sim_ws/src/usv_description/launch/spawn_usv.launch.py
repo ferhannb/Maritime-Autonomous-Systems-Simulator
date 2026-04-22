@@ -35,9 +35,9 @@ def generate_launch_description() -> LaunchDescription:
             "-y",
             "0.0",
             "-z",
-            "0.2",
+            "0.6",
         ],
         output="screen",
     )
 
-    return LaunchDescription([gz_launch, TimerAction(period=3.0, actions=[spawn_usv])])
+    return LaunchDescription([gz_launch, TimerAction(period=5.0, actions=[spawn_usv])])
