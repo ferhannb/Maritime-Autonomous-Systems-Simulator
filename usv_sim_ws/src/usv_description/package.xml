@@ -1,0 +1,19 @@
+<?xml version="1.0"?>
+<package format="3">
+  <name>usv_description</name>
+  <version>0.1.0</version>
+  <description>USV geometry and simulation model resources.</description>
+  <maintainer email="ferhannb@users.noreply.github.com">ferhannb</maintainer>
+  <license>MIT</license>
+
+  <buildtool_depend>ament_cmake</buildtool_depend>
+
+  <exec_depend>ament_index_python</exec_depend>
+  <exec_depend>launch</exec_depend>
+  <exec_depend>launch_ros</exec_depend>
+  <exec_depend>ros_gz_sim</exec_depend>
+
+  <export>
+    <build_type>ament_cmake</build_type>
+  </export>
+</package>
