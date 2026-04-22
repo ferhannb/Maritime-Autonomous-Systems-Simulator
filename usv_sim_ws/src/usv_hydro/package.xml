@@ -1,0 +1,17 @@
+<?xml version="1.0"?>
+<package format="3">
+  <name>usv_hydro</name>
+  <version>0.1.0</version>
+  <description>Custom hydrodynamics system plugins for USV simulation.</description>
+  <maintainer email="ferhannb@users.noreply.github.com">ferhannb</maintainer>
+  <license>MIT</license>
+
+  <buildtool_depend>ament_cmake</buildtool_depend>
+
+  <depend>gz_plugin_vendor</depend>
+  <depend>gz_sim_vendor</depend>
+
+  <export>
+    <build_type>ament_cmake</build_type>
+  </export>
+</package>

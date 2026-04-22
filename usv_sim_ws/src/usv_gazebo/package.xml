@@ -1,8 +1,8 @@
 <?xml version="1.0"?>
 <package format="3">
-  <name>usv_description</name>
+  <name>usv_gazebo</name>
   <version>0.1.0</version>
-  <description>USV geometry and simulation model resources.</description>
+  <description>Gazebo worlds and launch files for USV simulation.</description>
   <maintainer email="ferhannb@users.noreply.github.com">ferhannb</maintainer>
   <license>MIT</license>
 
@@ -12,6 +12,7 @@
   <exec_depend>launch</exec_depend>
   <exec_depend>launch_ros</exec_depend>
   <exec_depend>ros_gz_sim</exec_depend>
+  <exec_depend>usv_description</exec_depend>
   <exec_depend>usv_hydro</exec_depend>
 
   <export>
