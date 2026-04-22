@@ -133,3 +133,93 @@ This means combining:
 +------------------------------------------------------------------+
 |                         Gazebo Sim Backbone                      |
 +------------------------------------------------------------------+
+```
+
+## Visual RoadMap
+
+```text
+[Phase 0]
+Foundation
+    |
+    v
+[Phase 1]
+Minimal Floating Vehicle
+    |
+    v
+[Phase 2]
+Control Integration
+    |
+    v
+[Phase 3]
+Actuator Realism
+    |
+    v
+[Phase 4]
+Disturbance & Environment
+    |
+    v
+[Phase 5]
+Sensorized Autonomy Stack
+    |
+    v
+[Phase 6]
+Scenario Library
+    |
+    v
+[Phase 7]
+Validation & Digital Twin Direction
+```
+## Repository Structure
+
+``` text
+usv_sim_ws/
+├── src/
+│   ├── usv_description/
+│   │   ├── sdf/
+│   │   ├── meshes/
+│   │   ├── config/
+│   │   └── launch/
+│   │
+│   ├── usv_gazebo/
+│   │   ├── worlds/
+│   │   ├── models/
+│   │   ├── bridge/
+│   │   └── launch/
+│   │
+│   ├── usv_dynamics/
+│   │   ├── include/
+│   │   ├── src/
+│   │   └── config/
+│   │
+│   ├── usv_actuators/
+│   │   ├── include/
+│   │   ├── src/
+│   │   └── config/
+│   │
+│   ├── usv_sensors/
+│   │   ├── src/
+│   │   └── config/
+│   │
+│   ├── usv_control/
+│   │   ├── src/
+│   │   ├── config/
+│   │   └── launch/
+│   │
+│   ├── usv_navigation/
+│   │   ├── src/
+│   │   ├── config/
+│   │   └── launch/
+│   │
+│   ├── usv_msgs/
+│   │
+│   ├── usv_scenarios/
+│   │   ├── missions/
+│   │   ├── configs/
+│   │   └── launch/
+│   │
+│   └── usv_bringup/
+│       ├── launch/
+│       └── scripts/
+│
+└── README.md
+```
