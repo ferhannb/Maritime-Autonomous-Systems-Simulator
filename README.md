@@ -131,6 +131,7 @@ This means combining:
 |                         Gazebo Sim Backbone                      |
 +------------------------------------------------------------------+
 ---
+```text
 ## Visiual Roadmap
 
 [Phase 0]
