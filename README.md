@@ -78,7 +78,6 @@ This repository exists to address that need.
 
 ---
 
-## Manifesto
 
 We believe a serious USV simulator must be:
 
