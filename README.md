@@ -130,3 +130,36 @@ This means combining:
 +------------------------------------------------------------------+
 |                         Gazebo Sim Backbone                      |
 +------------------------------------------------------------------+
+---
+## Visiual Roadmap
+
+[Phase 0]
+Foundation
+    |
+    v
+[Phase 1]
+Minimal Floating Vehicle
+    |
+    v
+[Phase 2]
+Control Integration
+    |
+    v
+[Phase 3]
+Actuator Realism
+    |
+    v
+[Phase 4]
+Disturbance & Environment
+    |
+    v
+[Phase 5]
+Sensorized Autonomy Stack
+    |
+    v
+[Phase 6]
+Scenario Library
+    |
+    v
+[Phase 7]
+Validation & Digital Twin Direction
