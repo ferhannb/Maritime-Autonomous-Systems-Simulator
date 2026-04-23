@@ -63,10 +63,22 @@ def make_box_grid(params: HydroParams):
     return offsets, cell_volume, cell_height, drag_area
 
 
+def rotation_matrix(roll_rad: float, pitch_rad: float, yaw_rad: float):
+    cr = math.cos(roll_rad)
+    sr = math.sin(roll_rad)
+    cp = math.cos(pitch_rad)
+    sp = math.sin(pitch_rad)
+    cy = math.cos(yaw_rad)
+    sy = math.sin(yaw_rad)
+
+    r_x = np.array([[1.0, 0.0, 0.0], [0.0, cr, -sr], [0.0, sr, cr]], dtype=np.float64)
+    r_y = np.array([[cp, 0.0, sp], [0.0, 1.0, 0.0], [-sp, 0.0, cp]], dtype=np.float64)
+    r_z = np.array([[cy, -sy, 0.0], [sy, cy, 0.0], [0.0, 0.0, 1.0]], dtype=np.float64)
+    return r_z @ r_y @ r_x
+
+
 def rotz(yaw_rad: float):
-    c = math.cos(yaw_rad)
-    s = math.sin(yaw_rad)
-    return np.array([[c, -s, 0.0], [s, c, 0.0], [0.0, 0.0, 1.0]], dtype=np.float64)
+    return rotation_matrix(0.0, 0.0, yaw_rad)
 
 
 def aggregate_forces(
@@ -94,10 +106,7 @@ def aggregate_forces(
         cell_pos_world = pos_world + offset_world
 
         depth = params.water_level - cell_pos_world[2]
-        if depth <= 0.0:
-            continue
-
-        submergence = max(0.0, min(1.0, depth / cell_height))
+        submergence = max(0.0, min(1.0, depth / cell_height + 0.5))
         if submergence <= 0.0:
             continue
 
@@ -313,6 +322,94 @@ def sweep_symmetry_moments(
     return yaw_deg, mx, my
 
 
+def estimate_hydrostatic_stiffness(
+    offsets_local, cell_volume, cell_height, drag_area_cell, params, z_eq
+):
+    vel0 = np.zeros(3, dtype=np.float64)
+    current = np.array(params.current_velocity, dtype=np.float64)
+
+    def aggregate_at(z, roll, pitch):
+        return aggregate_forces(
+            offsets_local,
+            cell_volume,
+            cell_height,
+            drag_area_cell,
+            params,
+            np.array([0.0, 0.0, z], dtype=np.float64),
+            rotation_matrix(roll, pitch, 0.0),
+            vel0,
+            vel0,
+            current,
+        )
+
+    dz = 0.01
+    dtheta = 1e-3
+
+    fz_plus = aggregate_at(z_eq + dz, 0.0, 0.0)["force"][2]
+    fz_minus = aggregate_at(z_eq - dz, 0.0, 0.0)["force"][2]
+    k33_num = -(fz_plus - fz_minus) / (2.0 * dz)
+
+    fz_roll_plus = aggregate_at(z_eq, dtheta, 0.0)["force"][2]
+    fz_roll_minus = aggregate_at(z_eq, -dtheta, 0.0)["force"][2]
+    k34_num = -(fz_roll_plus - fz_roll_minus) / (2.0 * dtheta)
+
+    fz_pitch_plus = aggregate_at(z_eq, 0.0, dtheta)["force"][2]
+    fz_pitch_minus = aggregate_at(z_eq, 0.0, -dtheta)["force"][2]
+    k35_num = -(fz_pitch_plus - fz_pitch_minus) / (2.0 * dtheta)
+
+    mx_plus = aggregate_at(z_eq, dtheta, 0.0)["moment"][0]
+    mx_minus = aggregate_at(z_eq, -dtheta, 0.0)["moment"][0]
+    k44_num = -(mx_plus - mx_minus) / (2.0 * dtheta)
+
+    mx_heave_plus = aggregate_at(z_eq + dz, 0.0, 0.0)["moment"][0]
+    mx_heave_minus = aggregate_at(z_eq - dz, 0.0, 0.0)["moment"][0]
+    k43_num = -(mx_heave_plus - mx_heave_minus) / (2.0 * dz)
+
+    mx_pitch_plus = aggregate_at(z_eq, 0.0, dtheta)["moment"][0]
+    mx_pitch_minus = aggregate_at(z_eq, 0.0, -dtheta)["moment"][0]
+    k45_num = -(mx_pitch_plus - mx_pitch_minus) / (2.0 * dtheta)
+
+    my_plus = aggregate_at(z_eq, 0.0, dtheta)["moment"][1]
+    my_minus = aggregate_at(z_eq, 0.0, -dtheta)["moment"][1]
+    k55_num = -(my_plus - my_minus) / (2.0 * dtheta)
+
+    my_heave_plus = aggregate_at(z_eq + dz, 0.0, 0.0)["moment"][1]
+    my_heave_minus = aggregate_at(z_eq - dz, 0.0, 0.0)["moment"][1]
+    k53_num = -(my_heave_plus - my_heave_minus) / (2.0 * dz)
+
+    my_roll_plus = aggregate_at(z_eq, dtheta, 0.0)["moment"][1]
+    my_roll_minus = aggregate_at(z_eq, -dtheta, 0.0)["moment"][1]
+    k54_num = -(my_roll_plus - my_roll_minus) / (2.0 * dtheta)
+
+    displaced_volume = params.mass / params.fluid_density
+    waterplane_area = params.hull_length * params.hull_width
+    i_xx = params.hull_length * params.hull_width**3 / 12.0
+    i_yy = params.hull_width * params.hull_length**3 / 12.0
+    draft = params.mass / (params.fluid_density * params.hull_length * params.hull_width)
+    z_b_rel_cg = 0.5 * (draft - params.hull_height)
+    gm_t = i_xx / displaced_volume + z_b_rel_cg
+    gm_l = i_yy / displaced_volume + z_b_rel_cg
+
+    k33_theory = params.fluid_density * params.gravity * waterplane_area
+    k44_theory = params.fluid_density * params.gravity * displaced_volume * gm_t
+    k55_theory = params.fluid_density * params.gravity * displaced_volume * gm_l
+
+    return {
+        "k33_num_N_per_m": float(k33_num),
+        "k34_num_N_per_rad": float(k34_num),
+        "k35_num_N_per_rad": float(k35_num),
+        "k43_num_Nm_per_m": float(k43_num),
+        "k44_num_Nm_per_rad": float(k44_num),
+        "k45_num_Nm_per_rad": float(k45_num),
+        "k53_num_Nm_per_m": float(k53_num),
+        "k54_num_Nm_per_rad": float(k54_num),
+        "k55_num_Nm_per_rad": float(k55_num),
+        "k33_theory_N_per_m": float(k33_theory),
+        "k44_theory_Nm_per_rad": float(k44_theory),
+        "k55_theory_Nm_per_rad": float(k55_theory),
+    }
+
+
 def save_csv(path: Path, header: list[str], rows):
     with path.open("w", newline="", encoding="utf-8") as f:
         writer = csv.writer(f)
@@ -358,6 +455,9 @@ def main():
         offsets_local, cell_volume, cell_height, drag_area_cell, params, z_eq_discrete
     )
     yaw_deg, mx, my = sweep_symmetry_moments(
+        offsets_local, cell_volume, cell_height, drag_area_cell, params, z_eq_discrete
+    )
+    stiffness = estimate_hydrostatic_stiffness(
         offsets_local, cell_volume, cell_height, drag_area_cell, params, z_eq_discrete
     )
 
@@ -434,6 +534,21 @@ def main():
         ["yaw_deg", "mx_Nm", "my_Nm"],
         zip(yaw_deg.tolist(), mx.tolist(), my.tolist()),
     )
+    save_csv(
+        out_dir / "hydrostatic_stiffness.csv",
+        ["name", "numeric", "theory"],
+        [
+            ["K33_N_per_m", stiffness["k33_num_N_per_m"], stiffness["k33_theory_N_per_m"]],
+            ["K34_N_per_rad", stiffness["k34_num_N_per_rad"], 0.0],
+            ["K35_N_per_rad", stiffness["k35_num_N_per_rad"], 0.0],
+            ["K43_Nm_per_m", stiffness["k43_num_Nm_per_m"], 0.0],
+            ["K44_Nm_per_rad", stiffness["k44_num_Nm_per_rad"], stiffness["k44_theory_Nm_per_rad"]],
+            ["K45_Nm_per_rad", stiffness["k45_num_Nm_per_rad"], 0.0],
+            ["K53_Nm_per_m", stiffness["k53_num_Nm_per_m"], 0.0],
+            ["K54_Nm_per_rad", stiffness["k54_num_Nm_per_rad"], 0.0],
+            ["K55_Nm_per_rad", stiffness["k55_num_Nm_per_rad"], stiffness["k55_theory_Nm_per_rad"]],
+        ],
+    )
 
     summary = {
         "discrete_equilibrium_z_m": z_eq_discrete,
@@ -445,6 +560,18 @@ def main():
         "drag_at_current_match_N": float(np.interp(u_current, u_vals, drag_x)),
         "max_abs_mx_Nm": float(np.max(np.abs(mx))),
         "max_abs_my_Nm": float(np.max(np.abs(my))),
+        "k33_num_N_per_m": stiffness["k33_num_N_per_m"],
+        "k34_num_N_per_rad": stiffness["k34_num_N_per_rad"],
+        "k35_num_N_per_rad": stiffness["k35_num_N_per_rad"],
+        "k43_num_Nm_per_m": stiffness["k43_num_Nm_per_m"],
+        "k44_num_Nm_per_rad": stiffness["k44_num_Nm_per_rad"],
+        "k45_num_Nm_per_rad": stiffness["k45_num_Nm_per_rad"],
+        "k53_num_Nm_per_m": stiffness["k53_num_Nm_per_m"],
+        "k54_num_Nm_per_rad": stiffness["k54_num_Nm_per_rad"],
+        "k55_num_Nm_per_rad": stiffness["k55_num_Nm_per_rad"],
+        "k33_theory_N_per_m": stiffness["k33_theory_N_per_m"],
+        "k44_theory_Nm_per_rad": stiffness["k44_theory_Nm_per_rad"],
+        "k55_theory_Nm_per_rad": stiffness["k55_theory_Nm_per_rad"],
     }
     with (out_dir / "summary.json").open("w", encoding="utf-8") as f:
         json.dump(summary, f, indent=2)

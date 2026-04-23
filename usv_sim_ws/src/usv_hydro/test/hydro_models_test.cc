@@ -1,4 +1,5 @@
 #include <cmath>
+#include <fstream>
 #include <string>
 #include <vector>
 
@@ -113,12 +114,52 @@ TEST(HydroConfigTest, ValidatesParameters)
   EXPECT_NE(error.find("cd_x"), std::string::npos);
 }
 
+TEST(HydroConfigTest, LoadsYamlProfile)
+{
+  const std::string yamlPath = "/tmp/usv_hydro_profiles_test.yaml";
+  std::ofstream out(yamlPath, std::ios::trunc);
+  ASSERT_TRUE(out.good());
+  out
+      << "defaults:\n"
+      << "  fluid_density: 1025.0\n"
+      << "  cells: [12, 6, 4]\n"
+      << "  drag:\n"
+      << "    linear_total: [24.0, 48.0, 72.0]\n"
+      << "    scale_by_cell_count: true\n"
+      << "  hydrostatic_stiffness:\n"
+      << "    enabled: false\n"
+      << "    scale: 0.25\n"
+      << "profiles:\n"
+      << "  stiff:\n"
+      << "    hydrostatic_stiffness:\n"
+      << "      enabled: true\n"
+      << "      scale: 0.5\n";
+  out.close();
+
+  usv_hydro::HydroConfig cfg;
+  std::string error;
+  ASSERT_TRUE(cfg.LoadFromFileProfile(yamlPath, "stiff", &error)) << error;
+
+  EXPECT_NEAR(cfg.fluidDensity, 1025.0, kEps);
+  EXPECT_EQ(cfg.cellsX, 12);
+  EXPECT_EQ(cfg.cellsY, 6);
+  EXPECT_EQ(cfg.cellsZ, 4);
+  EXPECT_NEAR(cfg.linearDrag.X(), 24.0, kEps);
+  EXPECT_NEAR(cfg.linearDrag.Y(), 48.0, kEps);
+  EXPECT_NEAR(cfg.linearDrag.Z(), 72.0, kEps);
+  EXPECT_TRUE(cfg.scaleLinearDragByCellCount);
+  EXPECT_TRUE(cfg.useHydrostaticStiffnessMatrix);
+  EXPECT_NEAR(cfg.hydrostaticStiffnessScale, 0.5, kEps);
+}
+
 TEST(BuoyancyModelTest, ComputesSubmergenceAndForce)
 {
   usv_hydro::BuoyancyModel buoyancy(1000.0, 9.81);
 
-  EXPECT_NEAR(buoyancy.ComputeSubmergence(-0.1, 0.5), 0.0, kEps);
-  EXPECT_NEAR(buoyancy.ComputeSubmergence(0.2, 0.4), 0.5, kEps);
+  EXPECT_NEAR(buoyancy.ComputeSubmergence(-0.3, 0.5), 0.0, kEps);
+  EXPECT_NEAR(buoyancy.ComputeSubmergence(-0.2, 0.4), 0.0, kEps);
+  EXPECT_NEAR(buoyancy.ComputeSubmergence(0.0, 0.4), 0.5, kEps);
+  EXPECT_NEAR(buoyancy.ComputeSubmergence(0.2, 0.4), 1.0, kEps);
   EXPECT_NEAR(buoyancy.ComputeSubmergence(10.0, 0.4), 1.0, kEps);
 
   const auto force = buoyancy.ComputeForceWorld(2.0, 0.25);
@@ -200,9 +241,9 @@ TEST(HydroIntegratorTest, ComputesCellForcesWhenSubmerged)
       gz::math::Vector3d(0.0, 0.0, 0.0), grid, kinematics, env, buoyancy, drag);
 
   EXPECT_TRUE(result.submerged);
-  EXPECT_NEAR(result.submergence, 0.5, kEps);
-  EXPECT_NEAR(result.buoyancyWorld.Z(), 10000.0, kEps);
-  EXPECT_NEAR(result.dragWorld.X(), -250.0, kEps);
+  EXPECT_NEAR(result.submergence, 1.0, kEps);
+  EXPECT_NEAR(result.buoyancyWorld.Z(), 20000.0, kEps);
+  EXPECT_NEAR(result.dragWorld.X(), -500.0, kEps);
   EXPECT_NEAR(result.dragWorld.Y(), 0.0, kEps);
   EXPECT_NEAR(result.dragWorld.Z(), 0.0, kEps);
 }
@@ -409,6 +450,114 @@ TEST(HydroScenarioTest, SymmetryKeepsRollPitchMomentsNearZero)
 
   EXPECT_NEAR(aggregate.totalMoment.X(), 0.0, 1e-6);
   EXPECT_NEAR(aggregate.totalMoment.Y(), 0.0, 1e-6);
+}
+
+TEST(HydroScenarioTest, HydrostaticStiffnessMatchesBoxTheory)
+{
+  constexpr double length = 2.2;
+  constexpr double width = 1.1;
+  constexpr double height = 0.5;
+  constexpr double mass = 350.0;
+  constexpr double rho = 1000.0;
+  constexpr double gravity = 9.81;
+
+  const auto grid = MakeBoxGrid(length, width, height, 28, 16, 10);
+
+  usv_hydro::HydroConfig cfg;
+  cfg.waterLevel = 0.0;
+  cfg.fluidDensity = rho;
+  cfg.gravity = gravity;
+  cfg.currentVelocity = gz::math::Vector3d(0.0, 0.0, 0.0);
+
+  const usv_hydro::EnvironmentModel env(cfg);
+  const usv_hydro::BuoyancyModel buoyancy(cfg.fluidDensity, cfg.gravity);
+  const usv_hydro::DragModel drag(cfg.fluidDensity, cfg.cd, cfg.linearDrag);
+  const usv_hydro::HydroIntegrator integrator;
+
+  const double draft = mass / (rho * length * width);
+  const double zEq = 0.5 * height - draft;
+
+  const auto aggregateAt = [&](const double z, const double roll, const double pitch)
+  {
+    usv_hydro::HydroKinematics kinematics;
+    kinematics.positionWorld = gz::math::Vector3d(0.0, 0.0, z);
+    kinematics.rotationWorld = gz::math::Quaterniond(roll, pitch, 0.0);
+    kinematics.linearVelocityWorld = gz::math::Vector3d(0.0, 0.0, 0.0);
+    kinematics.angularVelocityWorld = gz::math::Vector3d(0.0, 0.0, 0.0);
+    return ComputeAggregate(grid, kinematics, env, buoyancy, drag, integrator);
+  };
+
+  const double dz = 0.01;
+  const double dTheta = 1e-3;
+
+  const double fzPlus = aggregateAt(zEq + dz, 0.0, 0.0).totalForce.Z();
+  const double fzMinus = aggregateAt(zEq - dz, 0.0, 0.0).totalForce.Z();
+  const double k33Num = -(fzPlus - fzMinus) / (2.0 * dz);
+
+  const double fzRollPlus = aggregateAt(zEq, dTheta, 0.0).totalForce.Z();
+  const double fzRollMinus = aggregateAt(zEq, -dTheta, 0.0).totalForce.Z();
+  const double k34Num = -(fzRollPlus - fzRollMinus) / (2.0 * dTheta);
+
+  const double fzPitchPlus = aggregateAt(zEq, 0.0, dTheta).totalForce.Z();
+  const double fzPitchMinus = aggregateAt(zEq, 0.0, -dTheta).totalForce.Z();
+  const double k35Num = -(fzPitchPlus - fzPitchMinus) / (2.0 * dTheta);
+
+  const double mxPlus = aggregateAt(zEq, dTheta, 0.0).totalMoment.X();
+  const double mxMinus = aggregateAt(zEq, -dTheta, 0.0).totalMoment.X();
+  const double k44Num = -(mxPlus - mxMinus) / (2.0 * dTheta);
+
+  const double mxHeavePlus = aggregateAt(zEq + dz, 0.0, 0.0).totalMoment.X();
+  const double mxHeaveMinus = aggregateAt(zEq - dz, 0.0, 0.0).totalMoment.X();
+  const double k43Num = -(mxHeavePlus - mxHeaveMinus) / (2.0 * dz);
+
+  const double mxPitchPlus = aggregateAt(zEq, 0.0, dTheta).totalMoment.X();
+  const double mxPitchMinus = aggregateAt(zEq, 0.0, -dTheta).totalMoment.X();
+  const double k45Num = -(mxPitchPlus - mxPitchMinus) / (2.0 * dTheta);
+
+  const double myPlus = aggregateAt(zEq, 0.0, dTheta).totalMoment.Y();
+  const double myMinus = aggregateAt(zEq, 0.0, -dTheta).totalMoment.Y();
+  const double k55Num = -(myPlus - myMinus) / (2.0 * dTheta);
+
+  const double myHeavePlus = aggregateAt(zEq + dz, 0.0, 0.0).totalMoment.Y();
+  const double myHeaveMinus = aggregateAt(zEq - dz, 0.0, 0.0).totalMoment.Y();
+  const double k53Num = -(myHeavePlus - myHeaveMinus) / (2.0 * dz);
+
+  const double myRollPlus = aggregateAt(zEq, dTheta, 0.0).totalMoment.Y();
+  const double myRollMinus = aggregateAt(zEq, -dTheta, 0.0).totalMoment.Y();
+  const double k54Num = -(myRollPlus - myRollMinus) / (2.0 * dTheta);
+
+  const double displacedVolume = mass / rho;
+  const double waterplaneArea = length * width;
+  const double iXX = length * std::pow(width, 3) / 12.0;
+  const double iYY = width * std::pow(length, 3) / 12.0;
+  const double zBRelCG = 0.5 * (draft - height);
+  const double gmT = iXX / displacedVolume + zBRelCG;
+  const double gmL = iYY / displacedVolume + zBRelCG;
+
+  const double k33Theory = rho * gravity * waterplaneArea;
+  const double k44Theory = rho * gravity * displacedVolume * gmT;
+  const double k55Theory = rho * gravity * displacedVolume * gmL;
+
+  EXPECT_GT(k33Num, 0.0);
+  EXPECT_GT(k44Num, 0.0);
+  EXPECT_GT(k55Num, 0.0);
+
+  EXPECT_NEAR(k33Num, k33Theory, 0.10 * k33Theory);
+  EXPECT_NEAR(k44Num, k44Theory, 0.15 * k44Theory);
+  EXPECT_NEAR(k55Num, k55Theory, 0.15 * k55Theory);
+
+  // For the symmetric box case at centered COG, cross-couplings should vanish.
+  EXPECT_NEAR(k34Num, 0.0, 200.0);
+  EXPECT_NEAR(k35Num, 0.0, 200.0);
+  EXPECT_NEAR(k43Num, 0.0, 200.0);
+  EXPECT_NEAR(k53Num, 0.0, 200.0);
+  EXPECT_NEAR(k45Num, 0.0, 200.0);
+  EXPECT_NEAR(k54Num, 0.0, 200.0);
+
+  // Hydrostatic matrix symmetry check.
+  EXPECT_NEAR(k34Num, k43Num, 100.0);
+  EXPECT_NEAR(k35Num, k53Num, 100.0);
+  EXPECT_NEAR(k45Num, k54Num, 100.0);
 }
 
 }  // namespace

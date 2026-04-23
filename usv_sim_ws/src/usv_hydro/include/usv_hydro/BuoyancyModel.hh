@@ -18,7 +18,7 @@ class BuoyancyModel
   public: gz::math::Vector3d ComputeForceWorld(
       const double _cellVolume, const double _submergence) const;
 
-  private: double fluidDensity{1000.0};
+  private: double fluidDensity{1025.0};
   private: double gravity{9.81};
 };
 

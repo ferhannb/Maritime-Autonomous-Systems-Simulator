@@ -1,3 +1,6 @@
+#include <algorithm>
+#include <cmath>
+#include <cstdlib>
 #include <memory>
 #include <string>
 
@@ -27,6 +30,31 @@ class HydroCellSystem final:
   public gz::sim::ISystemConfigure,
   public gz::sim::ISystemPreUpdate
 {
+  private: struct HydrostaticAggregate
+  {
+    gz::math::Vector3d forceWorld{0.0, 0.0, 0.0};
+    gz::math::Vector3d momentWorld{0.0, 0.0, 0.0};
+  };
+
+  private: struct LinearHydrostaticStiffness
+  {
+    double k33{0.0};
+    double k34{0.0};
+    double k35{0.0};
+    double k43{0.0};
+    double k44{0.0};
+    double k45{0.0};
+    double k53{0.0};
+    double k54{0.0};
+    double k55{0.0};
+  };
+
+  private: struct LinearHydrostaticWrench
+  {
+    gz::math::Vector3d forceWorld{0.0, 0.0, 0.0};
+    gz::math::Vector3d torqueWorld{0.0, 0.0, 0.0};
+  };
+
   public: void Configure(
       const gz::sim::Entity &_entity,
       const std::shared_ptr<const sdf::Element> &_sdf,
@@ -54,6 +82,10 @@ class HydroCellSystem final:
         this->config.fluidDensity, this->config.gravity);
     this->drag.SetParameters(
         this->config.fluidDensity, this->config.cd, this->config.linearDrag);
+    this->useHydrostaticStiffnessMatrix = this->config.useHydrostaticStiffnessMatrix;
+    this->hydrostaticStiffnessScale = this->config.hydrostaticStiffnessScale;
+    this->stiffnessHeaveStep = this->config.stiffnessHeaveStep;
+    this->stiffnessAngleStep = this->config.stiffnessAngleStep;
 
     auto linkEntity = this->model.LinkByName(_ecm, this->config.linkName);
     if (linkEntity == gz::sim::kNullEntity)
@@ -72,6 +104,8 @@ class HydroCellSystem final:
 
     this->cellsReady = false;
     this->cellGrid = HydroCellGrid{};
+    this->hydrostaticStiffnessReady = false;
+    this->hydrostaticStiffness = LinearHydrostaticStiffness{};
     this->configured = true;
   }
 
@@ -100,6 +134,26 @@ class HydroCellSystem final:
         *linearVel,
         *angularVel};
 
+    if (this->useHydrostaticStiffnessMatrix &&
+        !this->hydrostaticStiffnessReady)
+    {
+      if (!this->EstimateHydrostaticStiffness(*pose))
+      {
+        gzerr << "[usv_hydro] Failed to estimate hydrostatic stiffness matrix; "
+              << "disabling matrix runtime contribution.\n";
+        this->useHydrostaticStiffnessMatrix = false;
+      }
+      else
+      {
+        this->hydrostaticStiffnessReady = true;
+        gzmsg << "[usv_hydro] Runtime hydrostatic stiffness enabled "
+              << "(scale=" << this->hydrostaticStiffnessScale << ") "
+              << "K33=" << this->hydrostaticStiffness.k33
+              << " K44=" << this->hydrostaticStiffness.k44
+              << " K55=" << this->hydrostaticStiffness.k55 << "\n";
+      }
+    }
+
     for (const auto &offsetLocal : this->cellGrid.offsets)
     {
       const auto cellForces = this->integrator.ComputeCellForces(
@@ -116,6 +170,147 @@ class HydroCellSystem final:
       this->link.AddWorldForce(_ecm, cellForces.buoyancyWorld, offsetLocal);
       this->link.AddWorldForce(_ecm, cellForces.dragWorld, offsetLocal);
     }
+
+    if (this->useHydrostaticStiffnessMatrix &&
+        this->hydrostaticStiffnessReady &&
+        this->hydrostaticStiffnessScale > 0.0)
+    {
+      const auto restoringWrench = this->ComputeLinearHydrostaticWrench(*pose);
+      this->link.AddWorldWrench(
+          _ecm, restoringWrench.forceWorld, restoringWrench.torqueWorld);
+    }
+  }
+
+  private: HydrostaticAggregate ComputeHydrostaticAggregate(
+      const gz::math::Vector3d &_positionWorld,
+      const gz::math::Quaterniond &_rotationWorld) const
+  {
+    HydrostaticAggregate aggregate;
+
+    for (const auto &offsetLocal : this->cellGrid.offsets)
+    {
+      const auto offsetWorld = _rotationWorld.RotateVector(offsetLocal);
+      const auto cellPositionWorld = _positionWorld + offsetWorld;
+      const double depth = this->environment.DepthAt(cellPositionWorld.Z());
+      const double submergence =
+          this->buoyancy.ComputeSubmergence(depth, this->cellGrid.cellHeightApprox);
+      if (submergence <= 0.0)
+        continue;
+
+      const auto buoyancyForce =
+          this->buoyancy.ComputeForceWorld(this->cellGrid.cellVolume, submergence);
+      aggregate.forceWorld += buoyancyForce;
+      aggregate.momentWorld += offsetWorld.Cross(buoyancyForce);
+    }
+
+    return aggregate;
+  }
+
+  private: bool EstimateHydrostaticStiffness(const gz::math::Pose3d &_referencePose)
+  {
+    if (this->cellGrid.offsets.empty())
+      return false;
+
+    this->referencePositionWorld = _referencePose.Pos();
+    this->referenceRotationWorld = _referencePose.Rot();
+
+    const auto aggregateAt = [&](const double _dz,
+                                 const double _roll,
+                                 const double _pitch)
+    {
+      const auto positionWorld =
+          this->referencePositionWorld +
+          this->referenceRotationWorld.RotateVector(
+              gz::math::Vector3d(0.0, 0.0, _dz));
+      const auto rotationWorld =
+          this->referenceRotationWorld * gz::math::Quaterniond(_roll, _pitch, 0.0);
+      return this->ComputeHydrostaticAggregate(positionWorld, rotationWorld);
+    };
+
+    const double dz = this->stiffnessHeaveStep;
+    const double dTheta = this->stiffnessAngleStep;
+
+    const auto fZPlus = aggregateAt(dz, 0.0, 0.0).forceWorld.Z();
+    const auto fZMinus = aggregateAt(-dz, 0.0, 0.0).forceWorld.Z();
+    const auto fZRollPlus = aggregateAt(0.0, dTheta, 0.0).forceWorld.Z();
+    const auto fZRollMinus = aggregateAt(0.0, -dTheta, 0.0).forceWorld.Z();
+    const auto fZPitchPlus = aggregateAt(0.0, 0.0, dTheta).forceWorld.Z();
+    const auto fZPitchMinus = aggregateAt(0.0, 0.0, -dTheta).forceWorld.Z();
+
+    const auto mXPlus = aggregateAt(0.0, dTheta, 0.0).momentWorld.X();
+    const auto mXMinus = aggregateAt(0.0, -dTheta, 0.0).momentWorld.X();
+    const auto mXHeavePlus = aggregateAt(dz, 0.0, 0.0).momentWorld.X();
+    const auto mXHeaveMinus = aggregateAt(-dz, 0.0, 0.0).momentWorld.X();
+    const auto mXPitchPlus = aggregateAt(0.0, 0.0, dTheta).momentWorld.X();
+    const auto mXPitchMinus = aggregateAt(0.0, 0.0, -dTheta).momentWorld.X();
+
+    const auto mYPlus = aggregateAt(0.0, 0.0, dTheta).momentWorld.Y();
+    const auto mYMinus = aggregateAt(0.0, 0.0, -dTheta).momentWorld.Y();
+    const auto mYHeavePlus = aggregateAt(dz, 0.0, 0.0).momentWorld.Y();
+    const auto mYHeaveMinus = aggregateAt(-dz, 0.0, 0.0).momentWorld.Y();
+    const auto mYRollPlus = aggregateAt(0.0, dTheta, 0.0).momentWorld.Y();
+    const auto mYRollMinus = aggregateAt(0.0, -dTheta, 0.0).momentWorld.Y();
+
+    this->hydrostaticStiffness.k33 = -(fZPlus - fZMinus) / (2.0 * dz);
+    this->hydrostaticStiffness.k34 = -(fZRollPlus - fZRollMinus) / (2.0 * dTheta);
+    this->hydrostaticStiffness.k35 = -(fZPitchPlus - fZPitchMinus) / (2.0 * dTheta);
+    this->hydrostaticStiffness.k43 = -(mXHeavePlus - mXHeaveMinus) / (2.0 * dz);
+    this->hydrostaticStiffness.k44 = -(mXPlus - mXMinus) / (2.0 * dTheta);
+    this->hydrostaticStiffness.k45 = -(mXPitchPlus - mXPitchMinus) / (2.0 * dTheta);
+    this->hydrostaticStiffness.k53 = -(mYHeavePlus - mYHeaveMinus) / (2.0 * dz);
+    this->hydrostaticStiffness.k54 = -(mYRollPlus - mYRollMinus) / (2.0 * dTheta);
+    this->hydrostaticStiffness.k55 = -(mYPlus - mYMinus) / (2.0 * dTheta);
+
+    return std::isfinite(this->hydrostaticStiffness.k33) &&
+           std::isfinite(this->hydrostaticStiffness.k34) &&
+           std::isfinite(this->hydrostaticStiffness.k35) &&
+           std::isfinite(this->hydrostaticStiffness.k43) &&
+           std::isfinite(this->hydrostaticStiffness.k44) &&
+           std::isfinite(this->hydrostaticStiffness.k45) &&
+           std::isfinite(this->hydrostaticStiffness.k53) &&
+           std::isfinite(this->hydrostaticStiffness.k54) &&
+           std::isfinite(this->hydrostaticStiffness.k55);
+  }
+
+  private: LinearHydrostaticWrench ComputeLinearHydrostaticWrench(
+      const gz::math::Pose3d &_pose) const
+  {
+    LinearHydrostaticWrench wrench;
+
+    const auto deltaPositionWorld = _pose.Pos() - this->referencePositionWorld;
+    const auto deltaPositionRef =
+        this->referenceRotationWorld.RotateVectorReverse(deltaPositionWorld);
+    const auto rotationError =
+        this->referenceRotationWorld.Inverse() * _pose.Rot();
+    const auto eulerError = rotationError.Euler();
+
+    const double dz = deltaPositionRef.Z();
+    const double roll = eulerError.X();
+    const double pitch = eulerError.Y();
+    const double scale = this->hydrostaticStiffnessScale;
+
+    const gz::math::Vector3d forceRef(
+        0.0,
+        0.0,
+        -scale *
+        (this->hydrostaticStiffness.k33 * dz +
+         this->hydrostaticStiffness.k34 * roll +
+         this->hydrostaticStiffness.k35 * pitch));
+
+    const gz::math::Vector3d torqueRef(
+        -scale *
+        (this->hydrostaticStiffness.k43 * dz +
+         this->hydrostaticStiffness.k44 * roll +
+         this->hydrostaticStiffness.k45 * pitch),
+        -scale *
+        (this->hydrostaticStiffness.k53 * dz +
+         this->hydrostaticStiffness.k54 * roll +
+         this->hydrostaticStiffness.k55 * pitch),
+        0.0);
+
+    wrench.forceWorld = this->referenceRotationWorld.RotateVector(forceRef);
+    wrench.torqueWorld = this->referenceRotationWorld.RotateVector(torqueRef);
+    return wrench;
   }
 
   private: HydroConfig LoadConfig(
@@ -127,6 +322,42 @@ class HydroCellSystem final:
 
     if (_sdf->HasElement("link_name"))
       result.linkName = _sdf->Get<std::string>("link_name");
+
+    std::string configFile;
+    if (_sdf->HasElement("config_file"))
+      configFile = _sdf->Get<std::string>("config_file");
+    if (_sdf->HasElement("profile"))
+      result.profile = _sdf->Get<std::string>("profile");
+
+    if (const char *envConfig = std::getenv("USV_HYDRO_CONFIG_FILE"))
+    {
+      if (envConfig[0] != '\0')
+      {
+        configFile = envConfig;
+        gzmsg << "[usv_hydro] Using config_file from USV_HYDRO_CONFIG_FILE: "
+              << configFile << "\n";
+      }
+    }
+    if (const char *envProfile = std::getenv("USV_HYDRO_PROFILE"))
+    {
+      if (envProfile[0] != '\0')
+      {
+        result.profile = envProfile;
+        gzmsg << "[usv_hydro] Using profile from USV_HYDRO_PROFILE: "
+              << result.profile << "\n";
+      }
+    }
+
+    if (!configFile.empty())
+    {
+      std::string configError;
+      if (!result.LoadFromFileProfile(configFile, result.profile, &configError))
+      {
+        gzerr << "[usv_hydro] Failed to load config profile: "
+              << configError << "\n";
+      }
+    }
+
     if (_sdf->HasElement("fluid_density"))
       result.fluidDensity = _sdf->Get<double>("fluid_density");
     if (_sdf->HasElement("water_level"))
@@ -154,9 +385,29 @@ class HydroCellSystem final:
       result.linearDrag.Y(_sdf->Get<double>("linear_drag_y"));
     if (_sdf->HasElement("linear_drag_z"))
       result.linearDrag.Z(_sdf->Get<double>("linear_drag_z"));
+    if (_sdf->HasElement("scale_linear_drag_by_cell_count"))
+    {
+      result.scaleLinearDragByCellCount =
+          _sdf->Get<bool>("scale_linear_drag_by_cell_count");
+    }
 
     if (_sdf->HasElement("current_velocity"))
       result.currentVelocity = _sdf->Get<gz::math::Vector3d>("current_velocity");
+
+    if (_sdf->HasElement("use_hydrostatic_stiffness_matrix"))
+    {
+      result.useHydrostaticStiffnessMatrix =
+          _sdf->Get<bool>("use_hydrostatic_stiffness_matrix");
+    }
+    if (_sdf->HasElement("hydrostatic_stiffness_scale"))
+    {
+      result.hydrostaticStiffnessScale =
+          _sdf->Get<double>("hydrostatic_stiffness_scale");
+    }
+    if (_sdf->HasElement("stiffness_heave_step"))
+      result.stiffnessHeaveStep = _sdf->Get<double>("stiffness_heave_step");
+    if (_sdf->HasElement("stiffness_angle_step"))
+      result.stiffnessAngleStep = _sdf->Get<double>("stiffness_angle_step");
 
     return result;
   }
@@ -205,17 +456,42 @@ class HydroCellSystem final:
         (size.X() * size.Z()) / count,
         (size.X() * size.Y()) / count);
 
+    gz::math::Vector3d effectiveLinearDrag = this->config.linearDrag;
+    if (this->config.scaleLinearDragByCellCount && count > 0)
+    {
+      effectiveLinearDrag.X(effectiveLinearDrag.X() / count);
+      effectiveLinearDrag.Y(effectiveLinearDrag.Y() / count);
+      effectiveLinearDrag.Z(effectiveLinearDrag.Z() / count);
+    }
+    this->drag.SetParameters(
+        this->config.fluidDensity, this->config.cd, effectiveLinearDrag);
+
     this->cellsReady = true;
     gzmsg << "[usv_hydro] Hydro cells initialized for link ["
-          << this->config.linkName << "] count=" << count << "\n";
+          << this->config.linkName << "] count=" << count
+          << " drag_scaled_by_cell_count="
+          << (this->config.scaleLinearDragByCellCount ? "true" : "false")
+          << " effective_linear_drag=[" << effectiveLinearDrag.X() << ", "
+          << effectiveLinearDrag.Y() << ", " << effectiveLinearDrag.Z() << "]\n";
     return true;
   }
 
   private: bool configured{false};
   private: bool cellsReady{false};
+  private: bool useHydrostaticStiffnessMatrix{false};
+  private: bool hydrostaticStiffnessReady{false};
+
+  private: double hydrostaticStiffnessScale{1.0};
+  private: double stiffnessHeaveStep{0.01};
+  private: double stiffnessAngleStep{1e-3};
 
   private: HydroConfig config;
   private: HydroCellGrid cellGrid;
+  private: LinearHydrostaticStiffness hydrostaticStiffness;
+
+  private: gz::math::Vector3d referencePositionWorld{0.0, 0.0, 0.0};
+  private: gz::math::Quaterniond referenceRotationWorld;
+
   private: EnvironmentModel environment;
   private: BuoyancyModel buoyancy;
   private: DragModel drag;

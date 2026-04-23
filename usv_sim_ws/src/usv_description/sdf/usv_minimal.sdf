@@ -42,19 +42,9 @@
     <plugin
       filename="libusv_hydro_system.so"
       name="usv_hydro::systems::HydroCellSystem">
+      <config_file>usv_sim_ws/src/usv_hydro/config/hydro_profiles.yaml</config_file>
+      <profile>baseline</profile>
       <link_name>hull_link</link_name>
-      <fluid_density>1000.0</fluid_density>
-      <water_level>0.0</water_level>
-      <gravity>9.81</gravity>
-      <cells_x>14</cells_x>
-      <cells_y>8</cells_y>
-      <cells_z>4</cells_z>
-      <cd_x>0.9</cd_x>
-      <cd_y>1.3</cd_y>
-      <cd_z>2.0</cd_z>
-      <linear_drag_x>18.0</linear_drag_x>
-      <linear_drag_y>55.0</linear_drag_y>
-      <linear_drag_z>80.0</linear_drag_z>
       <current_velocity>0 0 0</current_velocity>
     </plugin>
   </model>

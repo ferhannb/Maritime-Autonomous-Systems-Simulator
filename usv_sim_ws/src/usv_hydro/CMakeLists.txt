@@ -4,6 +4,7 @@ project(usv_hydro)
 find_package(ament_cmake REQUIRED)
 find_package(gz-sim8 REQUIRED)
 find_package(gz-plugin2 REQUIRED COMPONENTS register)
+find_package(yaml-cpp REQUIRED)
 
 add_library(usv_hydro_system SHARED
   src/BuoyancyModel.cc
@@ -22,6 +23,7 @@ target_include_directories(usv_hydro_system
 target_link_libraries(usv_hydro_system
   PUBLIC
     gz-sim8::gz-sim8
+    yaml-cpp
   PRIVATE
     gz-plugin2::register
 )
@@ -34,6 +36,11 @@ install(
 install(
   DIRECTORY include/
   DESTINATION include
+)
+
+install(
+  DIRECTORY config/
+  DESTINATION share/${PROJECT_NAME}/config
 )
 
 if(BUILD_TESTING)

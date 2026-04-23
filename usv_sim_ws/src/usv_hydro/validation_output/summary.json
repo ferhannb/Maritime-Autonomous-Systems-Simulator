@@ -1,11 +1,23 @@
 {
-  "discrete_equilibrium_z_m": 0.042871900826446235,
+  "discrete_equilibrium_z_m": 0.10537190082644624,
   "analytical_equilibrium_z_m": 0.10537190082644629,
-  "hydrostatic_final_z_m": 0.04287190082644636,
-  "hydrostatic_final_vz_mps": -2.348211735243643e-16,
+  "hydrostatic_final_z_m": 0.10537190082644661,
+  "hydrostatic_final_vz_mps": -6.750494333229827e-16,
   "surge_final_vx_mps": 2.330079843602629e-60,
   "current_match_u_mps": 1.2,
   "drag_at_current_match_N": -0.0020019772615000875,
   "max_abs_mx_Nm": 3.410605131648481e-13,
-  "max_abs_my_Nm": 3.801403636316536e-13
+  "max_abs_my_Nm": 3.801403636316536e-13,
+  "k33_num_N_per_m": 23740.199999999502,
+  "k34_num_N_per_rad": -0.0,
+  "k35_num_N_per_rad": -6.821210263296962e-10,
+  "k43_num_Nm_per_m": -4.7628567756419216e-12,
+  "k44_num_Nm_per_rad": 1770.8645183358362,
+  "k45_num_Nm_per_rad": 1.5543122344752192e-12,
+  "k53_num_Nm_per_m": -7.527312106958561e-12,
+  "k54_num_Nm_per_rad": 5.551115123125783e-11,
+  "k55_num_Nm_per_rad": 8940.820285399219,
+  "k33_theory_N_per_m": 23740.200000000004,
+  "k44_theory_Nm_per_rad": 1783.7187892562,
+  "k55_theory_Nm_per_rad": 8965.129289256203
 }
