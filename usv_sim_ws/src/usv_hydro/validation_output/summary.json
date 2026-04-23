@@ -1,0 +1,11 @@
+{
+  "discrete_equilibrium_z_m": 0.042871900826446235,
+  "analytical_equilibrium_z_m": 0.10537190082644629,
+  "hydrostatic_final_z_m": 0.04287190082644636,
+  "hydrostatic_final_vz_mps": -2.348211735243643e-16,
+  "surge_final_vx_mps": 2.330079843602629e-60,
+  "current_match_u_mps": 1.2,
+  "drag_at_current_match_N": -0.0020019772615000875,
+  "max_abs_mx_Nm": 3.410605131648481e-13,
+  "max_abs_my_Nm": 3.801403636316536e-13
+}

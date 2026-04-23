@@ -1,0 +1,73 @@
+name: usv_hydro_ci
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/usv_hydro_ci.yml"
+      - "usv_sim_ws/src/usv_hydro/**"
+      - "usv_sim_ws/src/usv_description/**"
+      - "usv_sim_ws/src/usv_gazebo/**"
+  pull_request:
+    paths:
+      - ".github/workflows/usv_hydro_ci.yml"
+      - "usv_sim_ws/src/usv_hydro/**"
+      - "usv_sim_ws/src/usv_description/**"
+      - "usv_sim_ws/src/usv_gazebo/**"
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-24.04
+    env:
+      ROS_DISTRO: jazzy
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup ROS
+        uses: ros-tooling/setup-ros@v0.7
+        with:
+          required-ros-distributions: ${{ env.ROS_DISTRO }}
+
+      - name: Install build tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            python3-colcon-common-extensions \
+            python3-rosdep
+
+      - name: Install package dependencies
+        run: |
+          sudo rosdep init || true
+          rosdep update
+          rosdep install --from-paths usv_sim_ws/src --ignore-src -r -y
+
+      - name: Build usv_hydro
+        shell: bash
+        run: |
+          set -euo pipefail
+          source /opt/ros/${ROS_DISTRO}/setup.bash
+          cd usv_sim_ws
+          colcon build --packages-select usv_hydro --event-handlers console_direct+
+
+      - name: Run tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          source /opt/ros/${ROS_DISTRO}/setup.bash
+          cd usv_sim_ws
+          source install/setup.bash
+          colcon test --packages-select usv_hydro --event-handlers console_direct+ --ctest-args -VV
+          ctest --test-dir build/usv_hydro --output-on-failure -VV
+
+      - name: Upload test artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: usv_hydro_test_artifacts
+          if-no-files-found: warn
+          path: |
+            usv_sim_ws/build/usv_hydro/Testing/
+            usv_sim_ws/build/usv_hydro/test_results/
+            usv_sim_ws/log/
