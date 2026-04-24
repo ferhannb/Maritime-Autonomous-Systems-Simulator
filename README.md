@@ -13,7 +13,6 @@
 
 - [Overview](#overview)
 - [Why This Project Exists](#why-this-project-exists)
-- [Manifesto](#manifesto)
 - [Vision](#vision)
 - [Core Architecture](#core-architecture)
 - [System Layers](#system-layers)
