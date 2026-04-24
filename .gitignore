@@ -4,3 +4,12 @@ install/
 log/
 __pycache__/
 *.pyc
+
+# LaTeX build artifacts
+*.aux
+*.log
+*.out
+*.toc
+
+# Local/generated hydro tooling outputs
+usv_sim_ws/src/usv_hydro/tools/output/

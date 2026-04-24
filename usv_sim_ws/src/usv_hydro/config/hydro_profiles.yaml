@@ -21,6 +21,12 @@ defaults:
     heave_step: 0.01
     angle_step: 0.001
 
+  linear_seakeeping:
+    enabled: false
+    coeffs_file: seakeeping_coeffs_example.yaml
+    excitation_omega: 0.8
+    excitation_scale: 1.0
+
 profiles:
   baseline: {}
 
@@ -37,6 +43,12 @@ profiles:
       enabled: true
       scale: 0.5
 
+  seakeeping_on:
+    linear_seakeeping:
+      enabled: true
+      excitation_omega: 0.8
+      excitation_scale: 1.0
+
   ab_baseline:
     hydrostatic_stiffness:
       enabled: false
@@ -46,3 +58,16 @@ profiles:
     hydrostatic_stiffness:
       enabled: true
       scale: 0.5
+
+  # Cummins time-domain radiation model: B(omega) from seakeeping_coeffs_example.yaml
+  # is transformed to K(t) retardation kernel; A(inf) estimated via Ogilvie relation.
+  # The legacy single-frequency seakeeping handles wave excitation only.
+  cummins_on:
+    linear_seakeeping:
+      enabled: true
+      excitation_omega: 0.8
+      excitation_scale: 1.0
+    cummins_radiation:
+      enabled: true
+      kernel_max_t: 20.0
+      kernel_dt: 0.0

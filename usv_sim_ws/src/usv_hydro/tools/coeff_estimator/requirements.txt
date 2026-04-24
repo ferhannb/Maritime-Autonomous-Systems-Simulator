@@ -1,0 +1,5 @@
+# usv_hydro coefficient estimator — dependencies
+numpy>=1.24
+pyyaml>=6.0
+trimesh>=4.0         # for STL loading (optional)
+# capytaine>=2.1     # for BEM analysis (optional, pip install capytaine)

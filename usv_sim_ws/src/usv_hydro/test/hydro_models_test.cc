@@ -1,3 +1,4 @@
+#include <array>
 #include <cmath>
 #include <fstream>
 #include <string>
@@ -116,6 +117,16 @@ TEST(HydroConfigTest, ValidatesParameters)
 
 TEST(HydroConfigTest, LoadsYamlProfile)
 {
+  const std::string seakeepingPath = "/tmp/usv_seakeeping_coeffs_test.yaml";
+  std::ofstream skOut(seakeepingPath, std::ios::trunc);
+  ASSERT_TRUE(skOut.good());
+  skOut
+      << "frequencies:\n"
+      << "  - omega: 0.5\n"
+      << "    added_mass: [1, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 1]\n"
+      << "    damping: [1, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 1]\n";
+  skOut.close();
+
   const std::string yamlPath = "/tmp/usv_hydro_profiles_test.yaml";
   std::ofstream out(yamlPath, std::ios::trunc);
   ASSERT_TRUE(out.good());
@@ -129,11 +140,18 @@ TEST(HydroConfigTest, LoadsYamlProfile)
       << "  hydrostatic_stiffness:\n"
       << "    enabled: false\n"
       << "    scale: 0.25\n"
+      << "  linear_seakeeping:\n"
+      << "    enabled: true\n"
+      << "    coeffs_file: usv_seakeeping_coeffs_test.yaml\n"
+      << "    excitation_omega: 0.8\n"
+      << "    excitation_scale: 1.2\n"
       << "profiles:\n"
       << "  stiff:\n"
       << "    hydrostatic_stiffness:\n"
       << "      enabled: true\n"
-      << "      scale: 0.5\n";
+      << "      scale: 0.5\n"
+      << "    linear_seakeeping:\n"
+      << "      excitation_scale: 0.7\n";
   out.close();
 
   usv_hydro::HydroConfig cfg;
@@ -150,6 +168,52 @@ TEST(HydroConfigTest, LoadsYamlProfile)
   EXPECT_TRUE(cfg.scaleLinearDragByCellCount);
   EXPECT_TRUE(cfg.useHydrostaticStiffnessMatrix);
   EXPECT_NEAR(cfg.hydrostaticStiffnessScale, 0.5, kEps);
+  EXPECT_TRUE(cfg.useLinearSeakeepingModel);
+  EXPECT_EQ(cfg.seakeepingCoeffsFile, seakeepingPath);
+  EXPECT_NEAR(cfg.seakeepingExcitationOmega, 0.8, kEps);
+  EXPECT_NEAR(cfg.seakeepingExcitationScale, 0.7, kEps);
+}
+
+TEST(LinearSeakeepingModelTest, InterpolatesAndComputesBodyWrench)
+{
+  const std::string yamlPath = "/tmp/usv_linear_seakeeping_test.yaml";
+  std::ofstream out(yamlPath, std::ios::trunc);
+  ASSERT_TRUE(out.good());
+  out
+      << "frequencies:\n"
+      << "  - omega: 0.5\n"
+      << "    added_mass: [10, 0, 0, 0, 0, 0, 0, 11, 0, 0, 0, 0, 0, 0, 12, 0, 0, 0, 0, 0, 0, 13, 0, 0, 0, 0, 0, 0, 14, 0, 0, 0, 0, 0, 0, 15]\n"
+      << "    damping: [1, 0, 0, 0, 0, 0, 0, 2, 0, 0, 0, 0, 0, 0, 3, 0, 0, 0, 0, 0, 0, 4, 0, 0, 0, 0, 0, 0, 5, 0, 0, 0, 0, 0, 0, 6]\n"
+      << "    excitation_re: [100, 0, 0, 0, 0, 0]\n"
+      << "    excitation_im: [0, 0, 0, 0, 0, 0]\n"
+      << "  - omega: 1.5\n"
+      << "    added_mass: [20, 0, 0, 0, 0, 0, 0, 21, 0, 0, 0, 0, 0, 0, 22, 0, 0, 0, 0, 0, 0, 23, 0, 0, 0, 0, 0, 0, 24, 0, 0, 0, 0, 0, 0, 25]\n"
+      << "    damping: [2, 0, 0, 0, 0, 0, 0, 3, 0, 0, 0, 0, 0, 0, 4, 0, 0, 0, 0, 0, 0, 5, 0, 0, 0, 0, 0, 0, 6, 0, 0, 0, 0, 0, 0, 7]\n"
+      << "    excitation_re: [200, 0, 0, 0, 0, 0]\n"
+      << "    excitation_im: [0, 0, 0, 0, 0, 0]\n";
+  out.close();
+
+  usv_hydro::LinearSeakeepingModel model;
+  std::string error;
+  ASSERT_TRUE(model.LoadFromFile(yamlPath, &error)) << error;
+  ASSERT_TRUE(model.IsLoaded());
+
+  usv_hydro::SeakeepingCoefficients coeffs;
+  ASSERT_TRUE(model.Evaluate(1.0, &coeffs, &error)) << error;
+
+  EXPECT_NEAR(coeffs.addedMass[0], 15.0, kEps);
+  EXPECT_NEAR(coeffs.addedMass[7], 16.0, kEps);
+  EXPECT_NEAR(coeffs.damping[0], 1.5, kEps);
+  EXPECT_NEAR(coeffs.excitationRe[0], 150.0, kEps);
+
+  const std::array<double, 6> velocity{1.0, 0.0, 0.0, 0.0, 0.0, 0.0};
+  const std::array<double, 6> acceleration{0.2, 0.0, 0.0, 0.0, 0.0, 0.0};
+  const auto wrench = model.ComputeBodyWrench(
+      coeffs, velocity, acceleration, 0.0, 1.0, 1.0);
+
+  // -A*u_dot - B*u + Re{F_exc*exp(iwt)} at t=0.
+  EXPECT_NEAR(wrench[0], -(15.0 * 0.2 + 1.5 * 1.0) + 150.0, kEps);
+  EXPECT_NEAR(wrench[1], 0.0, kEps);
 }
 
 TEST(BuoyancyModelTest, ComputesSubmergenceAndForce)
@@ -558,6 +622,279 @@ TEST(HydroScenarioTest, HydrostaticStiffnessMatchesBoxTheory)
   EXPECT_NEAR(k34Num, k43Num, 100.0);
   EXPECT_NEAR(k35Num, k53Num, 100.0);
   EXPECT_NEAR(k45Num, k54Num, 100.0);
+}
+
+// ---------------------------------------------------------------------------
+// Helpers shared by new tests
+// ---------------------------------------------------------------------------
+
+static std::vector<usv_hydro::LinearSeakeepingModel::FrequencySample>
+MakeDiagonalSamples(const std::vector<double> &omegas,
+                    const double bDiag,
+                    const double aDiag)
+{
+  std::vector<usv_hydro::LinearSeakeepingModel::FrequencySample> samples;
+  samples.reserve(omegas.size());
+  for (const double om : omegas)
+  {
+    usv_hydro::LinearSeakeepingModel::FrequencySample s;
+    s.omega = om;
+    for (int i = 0; i < 6; ++i)
+    {
+      s.coeffs.damping[i * 6 + i] = bDiag;
+      s.coeffs.addedMass[i * 6 + i] = aDiag;
+    }
+    samples.push_back(s);
+  }
+  return samples;
+}
+
+// ---------------------------------------------------------------------------
+// CumminsRadiationModel tests
+// ---------------------------------------------------------------------------
+
+TEST(CumminsRadiationModelTest, BuildFromTwoFrequencySamples)
+{
+  const auto samples = MakeDiagonalSamples({0.5, 1.5}, 50.0, 100.0);
+
+  usv_hydro::CumminsRadiationModel model;
+  std::string error;
+  ASSERT_TRUE(model.BuildFromFrequencySamples(samples, 10.0, 0.1, &error))
+      << error;
+  EXPECT_TRUE(model.IsReady());
+}
+
+TEST(CumminsRadiationModelTest, RequiresAtLeastTwoSamples)
+{
+  const auto samples = MakeDiagonalSamples({1.0}, 50.0, 100.0);
+
+  usv_hydro::CumminsRadiationModel model;
+  std::string error;
+  EXPECT_FALSE(model.BuildFromFrequencySamples(samples, 10.0, 0.1, &error));
+  EXPECT_FALSE(model.IsReady());
+}
+
+TEST(CumminsRadiationModelTest, ZeroVelocityYieldsZeroMemoryForce)
+{
+  const auto samples = MakeDiagonalSamples({0.5, 1.5}, 50.0, 100.0);
+
+  usv_hydro::CumminsRadiationModel model;
+  std::string error;
+  ASSERT_TRUE(model.BuildFromFrequencySamples(samples, 10.0, 0.1, &error))
+      << error;
+
+  const std::array<double, 6> zeroVel{};
+  const std::array<double, 6> zeroAccel{};
+
+  // Fill history with zeros, then verify force remains zero
+  for (int i = 0; i < 120; ++i)
+  {
+    const auto force = model.ComputeRadiationForce(zeroVel, zeroAccel);
+    for (int j = 0; j < 6; ++j)
+      EXPECT_NEAR(force[j], 0.0, kEps) << "step " << i << " dof " << j;
+  }
+}
+
+TEST(CumminsRadiationModelTest, AddedMassTermNonZeroForNonZeroAccel)
+{
+  const auto samples = MakeDiagonalSamples({0.5, 1.5}, 50.0, 150.0);
+
+  usv_hydro::CumminsRadiationModel model;
+  std::string error;
+  ASSERT_TRUE(model.BuildFromFrequencySamples(samples, 10.0, 0.1, &error))
+      << error;
+
+  const std::array<double, 6> zeroVel{};
+  const std::array<double, 6> accel{1.0, 0.0, 0.0, 0.0, 0.0, 0.0};
+
+  const auto force = model.ComputeRadiationForce(zeroVel, accel);
+  // F[0] ≈ -A_inf_00 * accel[0]; A_inf_00 > 0 → force[0] < 0
+  EXPECT_LT(force[0], 0.0);
+}
+
+TEST(CumminsRadiationModelTest, MemoryForceBuildsWithNonZeroVelocityHistory)
+{
+  // Use 10 omega samples for a broader-band kernel
+  const std::vector<double> omegas = {0.2, 0.4, 0.6, 0.8, 1.0,
+                                       1.2, 1.4, 1.6, 1.8, 2.0};
+  const auto samples = MakeDiagonalSamples(omegas, 100.0, 150.0);
+
+  usv_hydro::CumminsRadiationModel model;
+  std::string error;
+  ASSERT_TRUE(model.BuildFromFrequencySamples(samples, 20.0, 0.05, &error))
+      << error;
+
+  const std::array<double, 6> vel{1.0, 0.0, 0.0, 0.0, 0.0, 0.0};
+  const std::array<double, 6> zeroAccel{};
+
+  // After filling history with constant unit surge velocity, radiation force
+  // in surge (index 0) should be non-trivially negative (radiation damping)
+  std::array<double, 6> lastForce{};
+  for (int i = 0; i < 50; ++i)
+    lastForce = model.ComputeRadiationForce(vel, zeroAccel);
+
+  EXPECT_LT(lastForce[0], 0.0);
+}
+
+TEST(CumminsRadiationModelTest, IsValidatedByConfig)
+{
+  const std::string skPath = "/tmp/usv_cummins_sk_test.yaml";
+  std::ofstream out(skPath, std::ios::trunc);
+  ASSERT_TRUE(out.good());
+  out << "frequencies:\n"
+      << "  - omega: 0.5\n"
+      << "    added_mass: [1,0,0,0,0,0, 0,1,0,0,0,0, 0,0,1,0,0,0,"
+         " 0,0,0,1,0,0, 0,0,0,0,1,0, 0,0,0,0,0,1]\n"
+      << "    damping: [1,0,0,0,0,0, 0,1,0,0,0,0, 0,0,1,0,0,0,"
+         " 0,0,0,1,0,0, 0,0,0,0,1,0, 0,0,0,0,0,1]\n"
+      << "  - omega: 1.5\n"
+      << "    added_mass: [2,0,0,0,0,0, 0,2,0,0,0,0, 0,0,2,0,0,0,"
+         " 0,0,0,2,0,0, 0,0,0,0,2,0, 0,0,0,0,0,2]\n"
+      << "    damping: [2,0,0,0,0,0, 0,2,0,0,0,0, 0,0,2,0,0,0,"
+         " 0,0,0,2,0,0, 0,0,0,0,2,0, 0,0,0,0,0,2]\n";
+  out.close();
+
+  usv_hydro::HydroConfig cfg;
+  cfg.useLinearSeakeepingModel = true;
+  cfg.seakeepingCoeffsFile = skPath;
+  cfg.useCumminsRadiation = true;
+  cfg.cumminsKernelMaxT = 15.0;
+  cfg.cumminsKernelDt = 0.0;
+
+  std::string error;
+  EXPECT_TRUE(cfg.IsValid(&error)) << error;
+
+  // Cummins without seakeeping should fail validation
+  usv_hydro::HydroConfig bad;
+  bad.useCumminsRadiation = true;
+  bad.cumminsKernelMaxT = 15.0;
+  EXPECT_FALSE(bad.IsValid(&error));
+  EXPECT_NE(error.find("cummins"), std::string::npos);
+
+  // Cummins with negative max_t should fail
+  usv_hydro::HydroConfig bad2;
+  bad2.useLinearSeakeepingModel = true;
+  bad2.seakeepingCoeffsFile = skPath;
+  bad2.useCumminsRadiation = true;
+  bad2.cumminsKernelMaxT = -1.0;
+  EXPECT_FALSE(bad2.IsValid(&error));
+}
+
+// ---------------------------------------------------------------------------
+// 6x6 hydrostatic stiffness tests
+// ---------------------------------------------------------------------------
+
+TEST(HydroScenarioTest, StiffnessSurgeSwayNearZeroForSymmetricHull)
+{
+  // For a box hull with flat bottom, a horizontal shift does not change the
+  // displaced volume → surge/sway restoring stiffness should be ≈ 0.
+  constexpr double length = 2.2;
+  constexpr double width  = 1.1;
+  constexpr double height = 0.5;
+  constexpr double mass   = 350.0;
+  constexpr double rho    = 1000.0;
+  constexpr double gravity = 9.81;
+
+  const auto grid = MakeBoxGrid(length, width, height, 28, 16, 10);
+
+  usv_hydro::HydroConfig cfg;
+  cfg.waterLevel   = 0.0;
+  cfg.fluidDensity = rho;
+  cfg.gravity      = gravity;
+
+  const usv_hydro::EnvironmentModel env(cfg);
+  const usv_hydro::BuoyancyModel buoyancy(rho, gravity);
+  const usv_hydro::DragModel drag(rho, cfg.cd, cfg.linearDrag);
+  const usv_hydro::HydroIntegrator integrator;
+
+  const double draft = mass / (rho * length * width);
+  const double zEq   = 0.5 * height - draft;
+  const double ds    = 0.01;
+
+  const auto aggAt = [&](double x, double y, double z)
+  {
+    usv_hydro::HydroKinematics kin;
+    kin.positionWorld = gz::math::Vector3d(x, y, z);
+    kin.rotationWorld = gz::math::Quaterniond(0.0, 0.0, 0.0);
+    kin.linearVelocityWorld  = gz::math::Vector3d(0.0, 0.0, 0.0);
+    kin.angularVelocityWorld = gz::math::Vector3d(0.0, 0.0, 0.0);
+    return ComputeAggregate(grid, kin, env, buoyancy, drag, integrator);
+  };
+
+  // C11 (surge column, surge row): dFx/dx_surge
+  const double fxP = aggAt( ds, 0, zEq).totalForce.X();
+  const double fxM = aggAt(-ds, 0, zEq).totalForce.X();
+  const double c11 = -(fxP - fxM) / (2.0 * ds);
+  EXPECT_NEAR(c11, 0.0, 5.0);
+
+  // C22 (sway column, sway row): dFy/dy_sway
+  const double fyP = aggAt(0,  ds, zEq).totalForce.Y();
+  const double fyM = aggAt(0, -ds, zEq).totalForce.Y();
+  const double c22 = -(fyP - fyM) / (2.0 * ds);
+  EXPECT_NEAR(c22, 0.0, 5.0);
+}
+
+TEST(HydroScenarioTest, Stiffness6x6Reciprocity)
+{
+  // Verify C35 ≈ C53 (heave-pitch / pitch-heave coupling reciprocity)
+  // and C34 ≈ C43 for the symmetric box hull.
+  constexpr double length = 2.2;
+  constexpr double width  = 1.1;
+  constexpr double height = 0.5;
+  constexpr double mass   = 350.0;
+  constexpr double rho    = 1000.0;
+  constexpr double gravity = 9.81;
+
+  const auto grid = MakeBoxGrid(length, width, height, 28, 16, 10);
+
+  usv_hydro::HydroConfig cfg;
+  cfg.waterLevel   = 0.0;
+  cfg.fluidDensity = rho;
+  cfg.gravity      = gravity;
+
+  const usv_hydro::EnvironmentModel env(cfg);
+  const usv_hydro::BuoyancyModel buoyancy(rho, gravity);
+  const usv_hydro::DragModel drag(rho, cfg.cd, cfg.linearDrag);
+  const usv_hydro::HydroIntegrator integrator;
+
+  const double draft  = mass / (rho * length * width);
+  const double zEq    = 0.5 * height - draft;
+  const double dz     = 0.01;
+  const double dTheta = 1e-3;
+
+  const auto aggAt = [&](double z, double roll, double pitch)
+  {
+    usv_hydro::HydroKinematics kin;
+    kin.positionWorld = gz::math::Vector3d(0.0, 0.0, z);
+    kin.rotationWorld = gz::math::Quaterniond(roll, pitch, 0.0);
+    kin.linearVelocityWorld  = gz::math::Vector3d(0.0, 0.0, 0.0);
+    kin.angularVelocityWorld = gz::math::Vector3d(0.0, 0.0, 0.0);
+    return ComputeAggregate(grid, kin, env, buoyancy, drag, integrator);
+  };
+
+  // C35 = -dFz/d(pitch)  (heave force per unit pitch)
+  const double fzPP = aggAt(zEq, 0.0,  dTheta).totalForce.Z();
+  const double fzPM = aggAt(zEq, 0.0, -dTheta).totalForce.Z();
+  const double c35  = -(fzPP - fzPM) / (2.0 * dTheta);
+
+  // C53 = -dMy/d(heave)  (pitch moment per unit heave)
+  const double myHP = aggAt(zEq + dz, 0.0, 0.0).totalMoment.Y();
+  const double myHM = aggAt(zEq - dz, 0.0, 0.0).totalMoment.Y();
+  const double c53  = -(myHP - myHM) / (2.0 * dz);
+
+  EXPECT_NEAR(c35, c53, 150.0);
+
+  // C34 = -dFz/d(roll)  (heave force per unit roll) — near zero for symmetric hull
+  const double fzRP = aggAt(zEq,  dTheta, 0.0).totalForce.Z();
+  const double fzRM = aggAt(zEq, -dTheta, 0.0).totalForce.Z();
+  const double c34  = -(fzRP - fzRM) / (2.0 * dTheta);
+
+  // C43 = -dMx/d(heave)  (roll moment per unit heave) — near zero for symmetric hull
+  const double mxHP = aggAt(zEq + dz, 0.0, 0.0).totalMoment.X();
+  const double mxHM = aggAt(zEq - dz, 0.0, 0.0).totalMoment.X();
+  const double c43  = -(mxHP - mxHM) / (2.0 * dz);
+
+  EXPECT_NEAR(c34, c43, 100.0);
 }
 
 }  // namespace
